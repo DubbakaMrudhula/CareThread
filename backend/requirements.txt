@@ -2,6 +2,10 @@ fastapi
 uvicorn
 pymongo
 motor
-pydantic
+pydantic[email]
 groq
 python-dotenv
+bcrypt
+passlib[bcrypt]
+pyjwt
+python-multipart
