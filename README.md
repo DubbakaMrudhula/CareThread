@@ -222,29 +222,3 @@ After running `seed.py`:
 | **Patient** | `john@patient.com` | `password123` |
 | **Patient** | `maria@patient.com` | `password123` |
 
----
-
-## 🎬 Demo Script (3 Minutes to Wow)
-
-1. Login as **`doctor@carethread.com`** → click a patient from the roster
-2. Open the **Live Session** workspace
-3. Click the 🔴 **mic button** → speak a clinical observation → watch text appear live
-4. **Send** → observe the **Cascade Triage Audit Log** populate in real-time
-5. Type `amoxicillin` (for a patient with Penicillin allergy) → see the **Cross-Reactivity Alert** fire
-6. Send a complex multi-symptom note → watch the **Clinical Consultation Console** animate with 3 expert agents debating → final differentials appear below
-7. Click **End Session** → navigate to the **Admin** dashboard
-8. Click **"Verify Chain Integrity"** → observe the green **"Audit Trail Intact"** shield appear
-9. Expand any audit log row → inspect the `prev:` and `hash:` SHA-256 fields
-
----
-
-## 🏆 Technical Highlights for Evaluators
-
-| Capability | Implementation |
-|---|---|
-| **Cost-aware AI routing** | 8B → 70B model cascade based on real-time complexity classification |
-| **Zero-latency drug safety** | Local ontology map (no API call) with 4 pharmacological class families |
-| **Immutable audit compliance** | SHA-256 hash chain stored in MongoDB, verified server-side on demand |
-| **Multi-agent clinical AI** | 3-specialist debate panel baked into a single 70B model prompt, returning structured JSON |
-| **Hands-free data entry** | Native Web Speech API with continuous transcription and interim result handling |
-| **Real-time cost tracking** | Per-call token cost estimation displayed live in the session workspace |
