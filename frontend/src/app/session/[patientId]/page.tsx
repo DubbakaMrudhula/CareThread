@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { ShieldAlert, Send, Fingerprint, HeartPulse, Loader2, Zap, Brain, Activity } from "lucide-react";
+import { ShieldAlert, Send, Fingerprint, HeartPulse, Loader2, Zap, Brain, Activity, Mic } from "lucide-react";
 import { useParams, useRouter } from "next/navigation";
 import { API_BASE_URL } from "@/config";
 
@@ -21,12 +21,69 @@ export default function LiveSession() {
   const [input, setInput] = useState("");
   const [isTyping, setIsTyping] = useState(false);
   const [differentials, setDifferentials] = useState<any[]>([]);
+  const [debateLogs, setDebateLogs] = useState<any[]>([]);
   const [flags, setFlags] = useState<any[]>([]);
   const [auditLogs, setAuditLogs] = useState<any[]>([]);
   const [routingTier, setRoutingTier] = useState<"FAST" | "CLINICAL" | null>(null);
   const [routingReason, setRoutingReason] = useState<string>("");
   const [totalCost, setTotalCost] = useState(0);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  const [isListening, setIsListening] = useState(false);
+  const recognitionRef = useRef<any>(null);
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+      if (SpeechRecognition) {
+        const rec = new SpeechRecognition();
+        rec.continuous = true;
+        rec.interimResults = true;
+        rec.lang = "en-US";
+
+        rec.onresult = (event: any) => {
+          let finalTranscript = "";
+          for (let i = event.resultIndex; i < event.results.length; ++i) {
+            if (event.results[i].isFinal) {
+              finalTranscript += event.results[i][0].transcript;
+            }
+          }
+          if (finalTranscript) {
+            setInput((prev) => prev + (prev ? " " : "") + finalTranscript);
+          }
+        };
+
+        rec.onerror = (e: any) => {
+          console.error("Speech recognition error", e);
+          setIsListening(false);
+        };
+
+        rec.onend = () => {
+          setIsListening(false);
+        };
+
+        recognitionRef.current = rec;
+      }
+    }
+  }, []);
+
+  const toggleListening = () => {
+    if (!recognitionRef.current) {
+      alert("Speech recognition is not supported in this browser. Please use Chrome or Edge.");
+      return;
+    }
+    if (isListening) {
+      recognitionRef.current.stop();
+      setIsListening(false);
+    } else {
+      try {
+        recognitionRef.current.start();
+        setIsListening(true);
+      } catch (err) {
+        console.error(err);
+      }
+    }
+  };
 
   useEffect(() => {
     if (!patientId) return;
@@ -79,6 +136,12 @@ export default function LiveSession() {
 
       if (data.differentials && data.differentials.length > 0) {
         setDifferentials(data.differentials);
+      }
+
+      if (data.debate_logs && data.debate_logs.length > 0) {
+        setDebateLogs(data.debate_logs);
+      } else {
+        setDebateLogs([]);
       }
 
       if (data.flags && data.flags.length > 0) {
@@ -262,17 +325,40 @@ export default function LiveSession() {
               ))}
             </AnimatePresence>
             <div ref={messagesEndRef} />
-          </div>
+          </div>          {isListening && (
+            <div className="flex items-center justify-center gap-1.5 py-2 bg-purple-50 text-purple-700 text-xs font-medium border-t border-purple-100 shrink-0">
+              <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-ping" />
+              Ambient Listening Active... speak clearly
+              <div className="flex gap-0.5 items-center ml-2 h-4">
+                <span className="w-0.5 bg-purple-main h-2 animate-bounce" style={{ animationDelay: "0.1s" }} />
+                <span className="w-0.5 bg-purple-main h-3 animate-bounce" style={{ animationDelay: "0.2s" }} />
+                <span className="w-0.5 bg-purple-main h-1 animate-bounce" style={{ animationDelay: "0.3s" }} />
+                <span className="w-0.5 bg-purple-main h-4 animate-bounce" style={{ animationDelay: "0.4s" }} />
+              </div>
+            </div>
+          )}
 
-          <div className="p-4 border-t border-border bg-white">
+          <div className="p-4 border-t border-border bg-white shrink-0">
             <div className="relative flex items-center max-w-4xl mx-auto">
+              <button
+                onClick={toggleListening}
+                type="button"
+                className={`absolute left-3 w-10 h-10 flex items-center justify-center rounded-full transition-all ${
+                  isListening
+                    ? "bg-red-500 text-white animate-pulse"
+                    : "text-zinc-400 hover:text-zinc-600 hover:bg-zinc-100"
+                }`}
+                title="Toggle Ambient Voice Input"
+              >
+                <Mic size={18} />
+              </button>
               <input
                 type="text"
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && handleSend()}
-                placeholder="Type clinician notes or patient response..."
-                className="w-full bg-zinc-50 border border-border rounded-full pl-6 pr-12 py-4 focus:outline-none focus:ring-2 focus:ring-purple-main focus:border-transparent shadow-sm transition-all text-sm md:text-base"
+                placeholder="Type clinician notes or speak ambiently..."
+                className="w-full bg-zinc-50 border border-border rounded-full pl-14 pr-12 py-4 focus:outline-none focus:ring-2 focus:ring-purple-main focus:border-transparent shadow-sm transition-all text-sm md:text-base"
                 disabled={isTyping}
               />
               <button
@@ -287,7 +373,7 @@ export default function LiveSession() {
             </div>
           </div>
         </div>
-
+ 
         {/* Right Panel: Live Audit Log */}
         {auditLogs.length > 0 && (
           <motion.div
@@ -328,67 +414,96 @@ export default function LiveSession() {
           </motion.div>
         )}
       </div>
-
+ 
       {/* Bottom Panel: Differentials */}
       <AnimatePresence>
-        {differentials.length > 0 && (
+        {(differentials.length > 0 || (debateLogs && debateLogs.length > 0)) && (
           <motion.div
             initial={{ height: 0, opacity: 0 }}
             animate={{ height: "auto", opacity: 1 }}
-            className="border-t border-border bg-surface p-6 overflow-x-auto shrink-0"
+            className="border-t border-border bg-surface p-6 overflow-y-auto max-h-[40vh] shrink-0"
           >
-            <div className="flex items-center gap-2 mb-4">
-              <HeartPulse className="text-rose-500" size={20} />
-              <h3 className="font-semibold text-foreground">AI Differential Diagnoses</h3>
-              <span className="text-xs bg-purple-100 text-purple-700 px-2 py-0.5 rounded-full font-medium">
-                70B Model · Live
-              </span>
-            </div>
+            {/* Multi-Agent Debate Logs */}
+            {debateLogs && debateLogs.length > 0 && (
+              <div className="mb-6 bg-zinc-950 text-zinc-100 rounded-xl p-5 shadow-lg border border-zinc-800 max-w-5xl">
+                <div className="flex items-center gap-2 mb-3 border-b border-zinc-850 pb-2">
+                  <div className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                  <h4 className="text-xs font-bold uppercase tracking-wider text-emerald-400">
+                    Clinical Consultation Console (Active Expert Consensus)
+                  </h4>
+                </div>
+                <div className="space-y-3">
+                  {debateLogs.map((log: any, index: number) => {
+                    const isCMO = log.agent.includes("Chief");
+                    const isSpec = log.agent.includes("Specialist");
+                    const colorClass = isCMO ? "text-purple-400 font-semibold" : isSpec ? "text-blue-400 font-semibold" : "text-amber-400 font-semibold";
+                    return (
+                      <div key={index} className="text-xs md:text-sm leading-relaxed border-l-2 border-zinc-800 pl-3 py-0.5">
+                        <span className={`${colorClass}`}>{log.agent}:</span>{" "}
+                        <span className="text-zinc-300 font-mono">{log.message}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
 
-            <div className="flex gap-4">
-              {differentials.map((diff, i) => (
-                <div
-                  key={i}
-                  className={`min-w-[300px] border rounded-xl p-4 shadow-sm relative overflow-hidden ${
-                    diff.urgent ? "bg-rose-50 border-rose-300" : "bg-white border-zinc-200"
-                  }`}
-                >
-                  <div
-                    className={`absolute top-0 left-0 w-full h-1 ${
-                      diff.urgent ? "bg-rose-600" : "bg-purple-400"
-                    }`}
-                  />
-                  <div className="flex justify-between items-start mb-2">
-                    <h4
-                      className={`font-bold ${
-                        diff.urgent ? "text-rose-900" : "text-foreground"
+            {differentials.length > 0 && (
+              <>
+                <div className="flex items-center gap-2 mb-4">
+                  <HeartPulse className="text-rose-500" size={20} />
+                  <h3 className="font-semibold text-foreground">AI Differential Diagnoses</h3>
+                  <span className="text-xs bg-purple-100 text-purple-700 px-2 py-0.5 rounded-full font-medium">
+                    70B Model Panel · Consensus Reached
+                  </span>
+                </div>
+    
+                <div className="flex gap-4 pb-2 overflow-x-auto">
+                  {differentials.map((diff, i) => (
+                    <div
+                      key={i}
+                      className={`min-w-[300px] border rounded-xl p-4 shadow-sm relative overflow-hidden ${
+                        diff.urgent ? "bg-rose-50 border-rose-300" : "bg-white border-zinc-200"
                       }`}
                     >
-                      {diff.condition}
-                    </h4>
-                    <span
-                      className={`${
-                        diff.urgent ? "text-rose-600" : "text-purple-600"
-                      } font-bold`}
-                    >
-                      {diff.confidence}%
-                    </span>
-                  </div>
-                  <div className="w-full bg-zinc-100 h-2 rounded-full mb-3">
-                    <div
-                      className={`${
-                        diff.urgent ? "bg-rose-600" : "bg-purple-400"
-                      } h-full rounded-full`}
-                      style={{ width: `${diff.confidence}%` }}
-                    />
-                  </div>
-                  {diff.urgent && (
-                    <p className="text-xs text-rose-700 font-medium mb-1">URGENT workup recommended</p>
-                  )}
-                  <p className="text-xs text-zinc-500">Evidence: {diff.evidence}</p>
+                      <div
+                        className={`absolute top-0 left-0 w-full h-1 ${
+                          diff.urgent ? "bg-rose-600" : "bg-purple-400"
+                        }`}
+                      />
+                      <div className="flex justify-between items-start mb-2">
+                        <h4
+                          className={`font-bold ${
+                            diff.urgent ? "text-rose-900" : "text-foreground"
+                          }`}
+                        >
+                          {diff.condition}
+                        </h4>
+                        <span
+                          className={`${
+                            diff.urgent ? "text-rose-600" : "text-purple-600"
+                          } font-bold`}
+                        >
+                          {diff.confidence}%
+                        </span>
+                      </div>
+                      <div className="w-full bg-zinc-100 h-2 rounded-full mb-3">
+                        <div
+                          className={`${
+                            diff.urgent ? "bg-rose-600" : "bg-purple-400"
+                          } h-full rounded-full`}
+                          style={{ width: `${diff.confidence}%` }}
+                        />
+                      </div>
+                      {diff.urgent && (
+                        <p className="text-xs text-rose-700 font-medium mb-1">URGENT workup recommended</p>
+                      )}
+                      <p className="text-xs text-zinc-500">Evidence: {diff.evidence}</p>
+                    </div>
+                  ))}
                 </div>
-              ))}
-            </div>
+              </>
+            )}
           </motion.div>
         )}
       </AnimatePresence>
