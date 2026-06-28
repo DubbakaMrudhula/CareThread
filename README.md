@@ -25,12 +25,12 @@ The platform follows a classic decoupled Client-Server architecture separated in
 
 ```mermaid
 graph TD
-    subgraph Client Layer (Frontend)
+    subgraph "Client Layer (Frontend)"
         A[Next.js App / UI Pages] --> B[Framer Motion Animations]
         A --> C[State Manager / React Hooks]
     end
 
-    subgraph Service & Routing Layer (Backend API)
+    subgraph "Service & Routing Layer (Backend API)"
         D[FastAPI REST Endpoints] --> E[JWT & Role-based Access Middleware]
         D --> F[HIPAA Audit Logger]
         D --> G[Cascade LLM Router]
