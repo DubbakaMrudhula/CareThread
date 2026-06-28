@@ -23,6 +23,7 @@ import {
   ChevronDown
 } from "lucide-react";
 import Link from "next/link";
+import { API_BASE_URL } from "@/config";
 
 interface Patient {
   id: string;
@@ -89,7 +90,7 @@ export default function Home() {
 
   const fetchProfile = (tokenString: string) => {
     setLoading(true);
-    fetch("http://localhost:8000/api/auth/me", {
+    fetch(`${API_BASE_URL}/api/auth/me`, {
       headers: { Authorization: `Bearer ${tokenString}` }
     })
       .then((res) => {
@@ -111,7 +112,7 @@ export default function Home() {
   };
 
   const fetchDoctorPatients = (tokenString: string) => {
-    fetch("http://localhost:8000/api/doctors/patients", {
+    fetch(`${API_BASE_URL}/api/doctors/patients`, {
       headers: { Authorization: `Bearer ${tokenString}` }
     })
       .then((res) => res.json())
@@ -126,7 +127,7 @@ export default function Home() {
   };
 
   const fetchPatientVisits = (tokenString: string) => {
-    fetch("http://localhost:8000/api/patients/visits", {
+    fetch(`${API_BASE_URL}/api/patients/visits`, {
       headers: { Authorization: `Bearer ${tokenString}` }
     })
       .then((res) => res.json())
@@ -144,8 +145,8 @@ export default function Home() {
     e.preventDefault();
     setAuthError("");
     const url = isLogin
-      ? "http://localhost:8000/api/auth/login"
-      : "http://localhost:8000/api/auth/register";
+      ? `${API_BASE_URL}/api/auth/login`
+      : `${API_BASE_URL}/api/auth/register`;
 
     const body = isLogin
       ? { email: authEmail, password: authPassword }
@@ -198,7 +199,7 @@ export default function Home() {
     e.preventDefault();
     setAddPatientError("");
     try {
-      const res = await fetch("http://localhost:8000/api/doctors/patients", {
+      const res = await fetch(`${API_BASE_URL}/api/doctors/patients`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

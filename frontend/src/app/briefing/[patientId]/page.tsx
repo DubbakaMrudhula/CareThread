@@ -5,6 +5,7 @@ import { motion } from "framer-motion";
 import { AlertTriangle, TrendingUp, Activity, User, Calendar, ArrowRight, ShieldAlert, Loader2, ArrowLeft } from "lucide-react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
+import { API_BASE_URL } from "@/config";
 
 export default function PreVisitBriefing() {
   const { patientId } = useParams();
@@ -16,7 +17,7 @@ export default function PreVisitBriefing() {
   useEffect(() => {
     if (!patientId) return;
     
-    fetch(`http://localhost:8000/api/patient/${patientId}/briefing`)
+    fetch(`${API_BASE_URL}/api/patient/${patientId}/briefing`)
       .then(res => {
         if (!res.ok) throw new Error("Patient not found");
         return res.json();

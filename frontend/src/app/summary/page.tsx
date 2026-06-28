@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import { FileText, Download, CheckCircle, ShieldCheck, Loader2, Stethoscope } from "lucide-react";
 import Link from "next/link";
+import { API_BASE_URL } from "@/config";
 
 interface SoapNote {
   subjective: string;
@@ -41,7 +42,7 @@ export default function PostVisitSummary() {
       // Generate SOAP note from the session
       if (data.patientId && data.messages?.length > 1) {
         setSoapLoading(true);
-        fetch("http://localhost:8000/api/session/soap", {
+        fetch(`${API_BASE_URL}/api/session/soap`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -351,7 +352,7 @@ function VisitSubmitForm({ session, soap }: { session: SessionData | null; soap:
     if (spo2) vitalSigns.spo2 = parseFloat(spo2);
 
     try {
-      const res = await fetch("http://localhost:8000/api/doctors/visits", {
+      const res = await fetch(`${API_BASE_URL}/api/doctors/visits`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

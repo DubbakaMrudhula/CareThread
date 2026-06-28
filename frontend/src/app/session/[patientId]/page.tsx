@@ -4,6 +4,7 @@ import { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { ShieldAlert, Send, Fingerprint, HeartPulse, Loader2, Zap, Brain, Activity } from "lucide-react";
 import { useParams, useRouter } from "next/navigation";
+import { API_BASE_URL } from "@/config";
 
 export default function LiveSession() {
   const { patientId } = useParams();
@@ -29,7 +30,7 @@ export default function LiveSession() {
 
   useEffect(() => {
     if (!patientId) return;
-    fetch(`http://localhost:8000/api/patient/${patientId}/briefing`)
+    fetch(`${API_BASE_URL}/api/patient/${patientId}/briefing`)
       .then((res) => {
         if (!res.ok) throw new Error("Patient not found");
         return res.json();
@@ -56,7 +57,7 @@ export default function LiveSession() {
     setIsTyping(true);
 
     try {
-      const res = await fetch("http://localhost:8000/api/session/message", {
+      const res = await fetch(`${API_BASE_URL}/api/session/message`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
