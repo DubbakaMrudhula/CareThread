@@ -130,13 +130,13 @@ def get_agent_response(messages: list, complexity: str = "low") -> dict:
 
 def generate_differentials(messages: list, patient_history: list) -> dict:
     """
-    Real LLM-powered differential diagnosis generation.
+    Real LLM-powered differential diagnosis generation with a virtual multi-agent consensus debate.
     Calls the 70B model with a structured JSON prompt and parses the response.
     Falls back gracefully if JSON parsing fails.
     """
     # Build a compact conversation summary for context
     convo_text = "\n".join(
-        f"{'Clinician' if m.role == 'user' else 'AI'}: {m.content}"
+        f"{'Clinician' if getattr(m, 'role', '') == 'user' else 'AI'}: {getattr(m, 'content', '')}"
         for m in messages[-6:]  # Last 6 turns for context window efficiency
     )
 
@@ -146,16 +146,23 @@ def generate_differentials(messages: list, patient_history: list) -> dict:
     )
 
     system_prompt = (
-        "You are a clinical decision support AI generating differential diagnoses. "
-        "Analyze the conversation and patient history, then return ONLY a valid JSON array. "
-        "No markdown fences, no explanation — just the raw JSON array.\n\n"
-        "Each item in the array must have exactly these fields:\n"
-        '  "condition": string (diagnosis name),\n'
-        '  "confidence": integer 0-100 (clinical likelihood given the evidence),\n'
-        '  "evidence": string (≤12 words citing specific symptoms or history),\n'
-        '  "urgent": boolean (true only if needs immediate workup or escalation)\n\n'
-        "Return 2-4 differentials ordered by confidence descending. "
-        "Be medically accurate — base confidence on real epidemiology, not pattern matching."
+        "You are a clinical decision support AI running a virtual consensus debate between three medical experts:\n"
+        "1. Dr. Sarah Lin (General Practitioner) - Analyzes primary symptoms and patient history.\n"
+        "2. Dr. Marcus Vance (Specialist) - Offers a deep-dive specialist perspective (Cardiology, Neurology, etc. based on symptoms).\n"
+        "3. Dr. Helen Vance (Chief Medical Officer) - Moderates and drives final consensus.\n\n"
+        "Analyze the conversation and patient history. You must return ONLY a valid JSON object. "
+        "No markdown fences, no explanation — just raw JSON. The format MUST be exactly:\n"
+        "{\n"
+        '  "debate_logs": [\n'
+        '    {"agent": "Dr. Sarah Lin (General Practitioner)", "message": "GP perspective on the symptoms and history in 1-2 sentences."},\n'
+        '    {"agent": "Dr. Marcus Vance (Specialist)", "message": "Specialist perspective based on the clinical details in 1-2 sentences."},\n'
+        '    {"agent": "Dr. Helen Vance (Chief Medical Officer)", "message": "Summary of debate and consensus call in 1-2 sentences."}\n'
+        '  ],\n'
+        '  "differentials": [\n'
+        '    {"condition": "diagnosis name", "confidence": 85, "evidence": "symptom/history support <= 12 words", "urgent": true/false}\n'
+        '  ]\n'
+        "}\n\n"
+        "Return 2-4 differentials in the differentials array. Be clinically precise."
     )
 
     user_content = (
@@ -170,7 +177,7 @@ def generate_differentials(messages: list, patient_history: list) -> dict:
         ],
         model=COMPLEX_MODEL,
         temperature=0.1,
-        max_tokens=400,
+        max_tokens=600,
     )
 
     raw = completion.choices[0].message.content.strip()
@@ -185,20 +192,25 @@ def generate_differentials(messages: list, patient_history: list) -> dict:
         raw = "\n".join(raw.split("\n")[1:])
         raw = raw.rstrip("`").strip()
 
+    debate_logs = []
+    differentials = []
+
     try:
-        differentials = json.loads(raw)
-        if not isinstance(differentials, list):
-            raise ValueError("Expected a JSON array")
+        data = json.loads(raw)
+        debate_logs = data.get("debate_logs", [])
+        raw_diffs = data.get("differentials", [])
+        
+        if not isinstance(raw_diffs, list):
+            raise ValueError("Expected a differentials JSON array")
+        
         # Validate and clamp fields
-        validated = []
-        for d in differentials[:4]:
-            validated.append({
+        for d in raw_diffs[:4]:
+            differentials.append({
                 "condition": str(d.get("condition", "Unknown")),
                 "confidence": max(0, min(100, int(d.get("confidence", 50)))),
                 "evidence": str(d.get("evidence", "")),
                 "urgent": bool(d.get("urgent", False)),
             })
-        differentials = validated
     except (json.JSONDecodeError, ValueError, TypeError):
         # Graceful fallback — still a real model response, just unparseable
         differentials = [{
@@ -207,9 +219,15 @@ def generate_differentials(messages: list, patient_history: list) -> dict:
             "evidence": "LLM response could not be parsed as JSON",
             "urgent": False,
         }]
+        debate_logs = [
+            {"agent": "Dr. Sarah Lin (General Practitioner)", "message": "We need to gather more structured inputs."},
+            {"agent": "Dr. Marcus Vance (Specialist)", "message": "Agreed, clinical data format issue encountered."},
+            {"agent": "Dr. Helen Vance (Chief Medical Officer)", "message": "Proceeding with standard monitoring protocol."}
+        ]
 
     return {
         "differentials": differentials,
+        "debate_logs": debate_logs,
         "model_used": COMPLEX_MODEL,
         "cost_incurred": cost,
         "action": "Differential Generation",

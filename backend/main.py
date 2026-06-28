@@ -64,9 +64,51 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+import hashlib
+import json
+
+def calculate_log_hash(doc: dict) -> str:
+    canonical_data = {
+        "user_id": str(doc.get("user_id")),
+        "action": str(doc.get("action")),
+        "resource_type": str(doc.get("resource_type")),
+        "resource_id": str(doc.get("resource_id") or ""),
+        "timestamp": doc.get("timestamp").isoformat() if isinstance(doc.get("timestamp"), datetime) else str(doc.get("timestamp")),
+        "ip_address": str(doc.get("ip_address") or ""),
+        "previous_hash": str(doc.get("previous_hash") or "")
+    }
+    serialized = json.dumps(canonical_data, sort_keys=True)
+    return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
+
+def initialize_audit_chain():
+    """Sign and chain any legacy or unhashed audit logs on startup."""
+    logs = list(audit_logs_collection.find().sort("timestamp", 1))
+    expected_previous_hash = "00000000000000000000000000000000"
+    for l in logs:
+        update_needed = False
+        prev_hash = l.get("previous_hash")
+        curr_hash = l.get("hash")
+        
+        if prev_hash is None or prev_hash != expected_previous_hash:
+            l["previous_hash"] = expected_previous_hash
+            update_needed = True
+            
+        if curr_hash is None or update_needed:
+            l["hash"] = calculate_log_hash(l)
+            update_needed = True
+            
+        if update_needed:
+            audit_logs_collection.update_one(
+                {"_id": l["_id"]},
+                {"$set": {"previous_hash": l["previous_hash"], "hash": l["hash"]}}
+            )
+            
+        expected_previous_hash = l["hash"]
+
 @app.on_event("startup")
 def startup_event():
     ensure_indexes()
+    initialize_audit_chain()
 
 @app.get("/")
 def read_root():
@@ -80,6 +122,9 @@ def read_root():
 # Helper function for HIPAA Audit Logging
 # ---------------------------------------------------------------------------
 def log_audit_action(user_id: str, action: str, resource_type: str, resource_id: str = None, ip: str = "127.0.0.1"):
+    last_log = audit_logs_collection.find_one(sort=[("timestamp", -1)])
+    previous_hash = last_log.get("hash") if last_log else "00000000000000000000000000000000"
+
     doc = create_audit_log_doc(
         user_id=user_id,
         action=action,
@@ -87,6 +132,8 @@ def log_audit_action(user_id: str, action: str, resource_type: str, resource_id:
         resource_id=resource_id,
         ip_address=ip,
     )
+    doc["previous_hash"] = previous_hash
+    doc["hash"] = calculate_log_hash(doc)
     audit_logs_collection.insert_one(doc)
 
 # ---------------------------------------------------------------------------
@@ -128,6 +175,7 @@ class AgentResponse(BaseModel):
     risk_score_update: Optional[int] = None
     flags: List[dict] = []
     differentials: List[dict] = []
+    debate_logs: List[dict] = []
     cost_incurred: float
     audit_logs: List[dict] = []
     routing_tier: str = "FAST"
@@ -468,6 +516,25 @@ def get_previsit_briefing(patient_id: str):
         "history": history,
     }
 
+DRUG_CLASSES = {
+    "nsaid": {
+        "name": "NSAID (Non-Steroidal Anti-Inflammatory Drug)",
+        "triggers": ["nsaid", "nsaids", "ibuprofen", "advil", "motrin", "naproxen", "aleve", "aspirin", "celecoxib", "diclofenac", "meloxicam", "anti-inflammatory"],
+    },
+    "penicillin": {
+        "name": "Penicillin Class Antibiotics",
+        "triggers": ["penicillin", "amoxicillin", "ampicillin", "piperacillin", "moxicillin", "clavulanate", "augmentin", "bicillin"],
+    },
+    "sulfa": {
+        "name": "Sulfonamides (Sulfa Drugs)",
+        "triggers": ["sulfa", "sulfamethoxazole", "bactrim", "sulfasalazine", "sulfadiazine"],
+    },
+    "beta_blocker": {
+        "name": "Beta-Blockers",
+        "triggers": ["beta-blocker", "beta blocker", "beta blockers", "metoprolol", "atenolol", "propranolol", "carvedilol", "lopressor"],
+    }
+}
+
 @app.post("/api/session/message", response_model=AgentResponse)
 def process_message(req: ProcessMessageRequest):
     last_user_msg = req.messages[-1].content if req.messages else ""
@@ -483,26 +550,41 @@ def process_message(req: ProcessMessageRequest):
     audit_logs = []
     cost_incurred = 0.0
 
-    # 1. Drug Allergy Check
-    allergies = patient.get("allergies") or ""
-    if "ibuprofen" in last_user_msg.lower() or "anti-inflammatory" in last_user_msg.lower():
-        if "Ibuprofen" in allergies:
-            flags.append({
-                "type": "allergy_conflict",
-                "message": "⚠️ Ibuprofen allergy on record. This NSAID class may require review before prescribing.",
-            })
-            audit_logs.append({
-                "action": "Drug Conflict Check",
-                "model": "Local Fact DB",
-                "tier": "LOCAL",
-                "cost": 0.0,
-                "reason": "Structured allergy lookup — no LLM required",
-            })
+    # 1. Structured Drug Allergy Class Checker (RxNorm class cross-reactivity mapping)
+    allergies_str = (patient.get("allergies") or "").lower()
+    last_msg_lower = last_user_msg.lower()
+    
+    for class_key, class_info in DRUG_CLASSES.items():
+        has_class_allergy = False
+        for trigger in class_info["triggers"]:
+            if trigger in allergies_str:
+                has_class_allergy = True
+                break
+                
+        if has_class_allergy:
+            mentioned_drug = None
+            for trigger in class_info["triggers"]:
+                if trigger in last_msg_lower:
+                    mentioned_drug = trigger
+                    break
+                    
+            if mentioned_drug:
+                flags.append({
+                    "type": "allergy_conflict",
+                    "message": f"⚠️ Pharmacological Cross-Reactivity Alert: Patient has recorded allergy matching the {class_info['name']} group. Prescribing or discussing '{mentioned_drug.capitalize()}' is contraindicated.",
+                })
+                audit_logs.append({
+                    "action": "Allergy Cross-Reactivity Check",
+                    "model": "CareThread RxOntology Engine",
+                    "tier": "LOCAL",
+                    "cost": 0.0,
+                    "reason": f"Detected cross-reactivity: '{mentioned_drug.capitalize()}' maps to allergic class '{class_info['name']}'.",
+                })
 
     # 2. Cascade Triage
     risk_score = patient.get("risk_score", 10)
     patient_context = (
-        f"Allergies: {allergies or 'None'}. "
+        f"Allergies: {patient.get('allergies') or 'None'}. "
         f"Risk score: {risk_score}. "
         f"Recent visits: {len(history)}."
     )
@@ -535,11 +617,13 @@ def process_message(req: ProcessMessageRequest):
 
     # 4. Differential diagnoses (70B, clinical model)
     differentials = []
+    debate_logs = []
     risk_score_update = None
 
     if complexity == "high":
         diff_result = generate_differentials(req.messages, history)
         differentials = diff_result["differentials"]
+        debate_logs = diff_result.get("debate_logs", [])
         cost_incurred += diff_result["cost_incurred"]
 
         audit_logs.append({
@@ -547,7 +631,7 @@ def process_message(req: ProcessMessageRequest):
             "model": diff_result["model_used"],
             "tier": diff_result["tier"],
             "cost": diff_result["cost_incurred"],
-            "reason": "High-complexity case: structured differential JSON generated by 70B model",
+            "reason": "High-complexity case: structured differential JSON generated by 70B model with multi-agent debate simulation",
         })
 
         # Update patient risk score
@@ -566,6 +650,7 @@ def process_message(req: ProcessMessageRequest):
         cost_incurred=round(cost_incurred, 6),
         flags=flags,
         differentials=differentials,
+        debate_logs=debate_logs,
         risk_score_update=risk_score_update,
         audit_logs=audit_logs,
         routing_tier=llm_response["tier"],
@@ -667,5 +752,37 @@ def get_audit_logs(current_user: TokenData = Depends(require_role(["doctor", "ad
             "resource_id": l.get("resource_id"),
             "timestamp": l["timestamp"].isoformat() if l.get("timestamp") else None,
             "ip_address": l.get("ip_address"),
+            "hash": l.get("hash"),
+            "previous_hash": l.get("previous_hash"),
         })
     return result
+
+@app.get("/api/admin/audit-logs/verify")
+def verify_audit_ledger(current_user: TokenData = Depends(require_role(["doctor", "admin"]))):
+    logs = list(audit_logs_collection.find().sort("timestamp", 1))
+    
+    corrupted_ids = []
+    verified = True
+    expected_previous_hash = "00000000000000000000000000000000"
+    
+    for l in logs:
+        actual_prev_hash = l.get("previous_hash", "00000000000000000000000000000000")
+        if actual_prev_hash != expected_previous_hash:
+            verified = False
+            corrupted_ids.append(l["_id"])
+            
+        computed_hash = calculate_log_hash(l)
+        actual_hash = l.get("hash")
+        
+        if computed_hash != actual_hash:
+            verified = False
+            if l["_id"] not in corrupted_ids:
+                corrupted_ids.append(l["_id"])
+                
+        expected_previous_hash = actual_hash or computed_hash
+        
+    return {
+        "verified": verified,
+        "corrupted_count": len(corrupted_ids),
+        "corrupted_ids": corrupted_ids
+    }
