@@ -61,6 +61,14 @@ app.add_middleware(
 def startup_event():
     ensure_indexes()
 
+@app.get("/")
+def read_root():
+    return {
+        "status": "online",
+        "service": "CareThread Secure API",
+        "documentation": "/docs"
+    }
+
 # ---------------------------------------------------------------------------
 # Helper function for HIPAA Audit Logging
 # ---------------------------------------------------------------------------
