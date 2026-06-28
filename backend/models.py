@@ -104,7 +104,15 @@ def create_visit_doc(
         "diagnosis": diagnosis,
         "prescription": prescription,
         "notes": notes,
-        "vital_signs": vital_signs,
+        "vital_signs": {
+            "systolic": vital_signs.get("systolic") if vital_signs else None,
+            "diastolic": vital_signs.get("diastolic") if vital_signs else None,
+            "heartRate": vital_signs.get("heartRate") if vital_signs else None,
+            "weight": vital_signs.get("weight") if vital_signs else None,
+            "glucose": vital_signs.get("glucose") if vital_signs else None,
+            "temperature": vital_signs.get("temperature") if vital_signs else None,
+            "spo2": vital_signs.get("spo2") if vital_signs else None,
+        } if vital_signs else {},
         "created_at": now,
         "updated_at": now,
     }

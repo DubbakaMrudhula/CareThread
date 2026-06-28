@@ -291,7 +291,262 @@ ${(session.differentials || []).map(d => `- ${d.condition} (${d.confidence}% con
             )}
           </div>
         </div>
+
+        {/* ── Submit Visit to EHR ────────────────────────────────────────── */}
+        <div className="bg-surface rounded-2xl border border-border shadow-sm p-8">
+          <h2 className="text-xl font-bold text-foreground mb-6 flex items-center gap-2">
+            <CheckCircle className="text-purple-main" /> Finalize Medical Visit
+          </h2>
+
+          <VisitSubmitForm session={session} soap={soap} />
+        </div>
       </motion.div>
     </div>
+  );
+}
+
+function VisitSubmitForm({ session, soap }: { session: SessionData | null; soap: SoapNote | null }) {
+  const [diagnosis, setDiagnosis] = useState("");
+  const [prescription, setPrescription] = useState("");
+  const [notes, setNotes] = useState("");
+  const [visitType, setVisitType] = useState("consultation");
+  
+  // Vitals State
+  const [systolic, setSystolic] = useState("");
+  const [diastolic, setDiastolic] = useState("");
+  const [heartRate, setHeartRate] = useState("");
+  const [weight, setWeight] = useState("");
+  const [glucose, setGlucose] = useState("");
+  const [temperature, setTemperature] = useState("");
+  const [spo2, setSpo2] = useState("");
+
+  const [loading, setLoading] = useState(false);
+  const [success, setSuccess] = useState(false);
+  const [error, setError] = useState("");
+
+  // Prefill when soap note loads
+  useEffect(() => {
+    if (soap) {
+      setDiagnosis(soap.assessment ? soap.assessment.split("\n")[0].replace(/Assessment:\s*/i, "").trim() : "");
+      setPrescription(soap.plan ? soap.plan.trim() : "");
+      setNotes(`Subjective:\n${soap.subjective}\n\nObjective:\n${soap.objective}`);
+    }
+  }, [soap]);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!session) return;
+    setError("");
+    setLoading(true);
+
+    const token = localStorage.getItem("carethread_token");
+
+    const vitalSigns: any = {};
+    if (systolic) vitalSigns.systolic = parseFloat(systolic);
+    if (diastolic) vitalSigns.diastolic = parseFloat(diastolic);
+    if (heartRate) vitalSigns.heartRate = parseFloat(heartRate);
+    if (weight) vitalSigns.weight = parseFloat(weight);
+    if (glucose) vitalSigns.glucose = parseFloat(glucose);
+    if (temperature) vitalSigns.temperature = parseFloat(temperature);
+    if (spo2) vitalSigns.spo2 = parseFloat(spo2);
+
+    try {
+      const res = await fetch("http://localhost:8000/api/doctors/visits", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          patient_id: session.patientId,
+          visit_date: new Date().toISOString().split("T")[0],
+          visit_type: visitType,
+          diagnosis: diagnosis || "General Consultation",
+          prescription,
+          notes,
+          vital_signs: Object.keys(vitalSigns).length > 0 ? vitalSigns : null,
+        })
+      });
+
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || "Failed to submit visit record.");
+
+      setSuccess(true);
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (success) {
+    return (
+      <div className="p-6 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-xl text-center">
+        <h3 className="text-lg font-bold">Visit Logged Successfully</h3>
+        <p className="text-sm mt-1">The clinical record and structured vitals have been successfully synced to the secure patient ledger.</p>
+        <Link href="/" className="mt-4 inline-block px-4 py-2 bg-emerald-600 text-white rounded-lg text-sm font-semibold hover:bg-emerald-700 transition-colors">
+          Go Back to Dashboard
+        </Link>
+      </div>
+    );
+  }
+
+  return (
+    <form onSubmit={handleSubmit} className="space-y-6">
+      {error && (
+        <div className="p-3 bg-rose-50 border border-rose-100 text-rose-600 rounded-xl text-xs font-semibold">
+          {error}
+        </div>
+      )}
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        {/* Left Side: Clinical Text */}
+        <div className="space-y-4">
+          <div>
+            <label className="text-xs font-bold text-zinc-500 block mb-1">Visit Type</label>
+            <select
+              value={visitType}
+              onChange={(e) => setVisitType(e.target.value)}
+              className="w-full bg-zinc-50 border border-border rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-purple-main"
+            >
+              <option value="consultation">Consultation</option>
+              <option value="check-up">Check-up</option>
+              <option value="follow-up">Follow-up</option>
+              <option value="surgery">Surgery</option>
+            </select>
+          </div>
+
+          <div>
+            <label className="text-xs font-bold text-zinc-500 block mb-1">Primary Diagnosis</label>
+            <input
+              type="text"
+              required
+              value={diagnosis}
+              onChange={(e) => setDiagnosis(e.target.value)}
+              placeholder="e.g. Stage 1 Hypertension"
+              className="w-full bg-zinc-50 border border-border rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-purple-main"
+            />
+          </div>
+
+          <div>
+            <label className="text-xs font-bold text-zinc-500 block mb-1">Treatment Plan / Prescription</label>
+            <textarea
+              rows={3}
+              value={prescription}
+              onChange={(e) => setPrescription(e.target.value)}
+              placeholder="e.g. Lisinopril 10mg daily. Follow up in 4 weeks."
+              className="w-full bg-zinc-50 border border-border rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-purple-main"
+            />
+          </div>
+
+          <div>
+            <label className="text-xs font-bold text-zinc-500 block mb-1">Visit Notes</label>
+            <textarea
+              rows={4}
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              placeholder="Detailed doctor notes..."
+              className="w-full bg-zinc-50 border border-border rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-purple-main"
+            />
+          </div>
+        </div>
+
+        {/* Right Side: Structured Vitals (Optional) */}
+        <div className="space-y-4 bg-zinc-50/50 p-5 rounded-2xl border border-border">
+          <h3 className="text-sm font-bold text-zinc-600 mb-2 uppercase tracking-wider">Structured Vitals (Optional)</h3>
+          
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-xs font-semibold text-zinc-500 block mb-1">Systolic BP (mmHg)</label>
+              <input
+                type="number"
+                value={systolic}
+                onChange={(e) => setSystolic(e.target.value)}
+                placeholder="120"
+                className="w-full bg-white border border-border rounded-xl px-3 py-2 text-sm focus:outline-none"
+              />
+            </div>
+            <div>
+              <label className="text-xs font-semibold text-zinc-500 block mb-1">Diastolic BP (mmHg)</label>
+              <input
+                type="number"
+                value={diastolic}
+                onChange={(e) => setDiastolic(e.target.value)}
+                placeholder="80"
+                className="w-full bg-white border border-border rounded-xl px-3 py-2 text-sm focus:outline-none"
+              />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-xs font-semibold text-zinc-500 block mb-1">Heart Rate (bpm)</label>
+              <input
+                type="number"
+                value={heartRate}
+                onChange={(e) => setHeartRate(e.target.value)}
+                placeholder="72"
+                className="w-full bg-white border border-border rounded-xl px-3 py-2 text-sm focus:outline-none"
+              />
+            </div>
+            <div>
+              <label className="text-xs font-semibold text-zinc-500 block mb-1">SpO2 (%)</label>
+              <input
+                type="number"
+                value={spo2}
+                onChange={(e) => setSpo2(e.target.value)}
+                placeholder="98"
+                className="w-full bg-white border border-border rounded-xl px-3 py-2 text-sm focus:outline-none"
+              />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-xs font-semibold text-zinc-500 block mb-1">Temperature (°C)</label>
+              <input
+                type="number"
+                step="0.1"
+                value={temperature}
+                onChange={(e) => setTemperature(e.target.value)}
+                placeholder="36.8"
+                className="w-full bg-white border border-border rounded-xl px-3 py-2 text-sm focus:outline-none"
+              />
+            </div>
+            <div>
+              <label className="text-xs font-semibold text-zinc-500 block mb-1">Blood Glucose (mg/dL)</label>
+              <input
+                type="number"
+                value={glucose}
+                onChange={(e) => setGlucose(e.target.value)}
+                placeholder="90"
+                className="w-full bg-white border border-border rounded-xl px-3 py-2 text-sm focus:outline-none"
+              />
+            </div>
+          </div>
+
+          <div>
+            <label className="text-xs font-semibold text-zinc-500 block mb-1">Weight (kg)</label>
+            <input
+              type="number"
+              step="0.1"
+              value={weight}
+              onChange={(e) => setWeight(e.target.value)}
+              placeholder="70"
+              className="w-full bg-white border border-border rounded-xl px-3 py-2 text-sm focus:outline-none"
+            />
+          </div>
+        </div>
+      </div>
+
+      <button
+        type="submit"
+        disabled={loading}
+        className="w-full py-4 bg-purple-main hover:bg-purple-dark text-white font-bold rounded-xl text-lg transition-colors flex items-center justify-center gap-2"
+      >
+        {loading ? <Loader2 className="animate-spin" size={20} /> : null}
+        Commit Record to Patient EHR & Secure Ledger
+      </button>
+    </form>
   );
 }

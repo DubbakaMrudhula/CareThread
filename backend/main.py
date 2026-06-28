@@ -130,6 +130,15 @@ class SoapRequest(BaseModel):
     patient_id: str
     messages: List[dict]
 
+class VitalSignsSchema(BaseModel):
+    systolic: Optional[float] = None
+    diastolic: Optional[float] = None
+    heartRate: Optional[float] = None
+    weight: Optional[float] = None
+    glucose: Optional[float] = None
+    temperature: Optional[float] = None
+    spo2: Optional[float] = None
+
 class VisitCreate(BaseModel):
     patient_id: str
     visit_date: str
@@ -137,7 +146,7 @@ class VisitCreate(BaseModel):
     diagnosis: str
     prescription: str
     notes: str
-    vital_signs: Optional[dict] = None
+    vital_signs: Optional[VitalSignsSchema] = None
 
 class PatientCreate(BaseModel):
     email: EmailStr
@@ -594,7 +603,7 @@ def create_visit(req: VisitCreate, current_user: TokenData = Depends(require_rol
         diagnosis=req.diagnosis,
         prescription=req.prescription,
         notes=req.notes,
-        vital_signs=req.vital_signs,
+        vital_signs=req.vital_signs.dict() if req.vital_signs else None,
     )
     visits_collection.insert_one(visit_doc)
 

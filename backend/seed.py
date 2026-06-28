@@ -132,7 +132,7 @@ def seed_database():
             diagnosis="NSAID Gastric Reaction",
             prescription="Discontinue Ibuprofen; Acetaminophen for pain control.",
             notes="Patient presented with a severe stomach reaction to Ibuprofen. Noted allergy.",
-            vital_signs={"temperature": 98.6, "bloodPressure": "120/80", "heartRate": 72, "weight": 145.0},
+            vital_signs={"temperature": 37.0, "systolic": 120, "diastolic": 80, "heartRate": 72, "weight": 65.8, "glucose": 85.0, "spo2": 98.0},
         ),
         create_visit_doc(
             patient_id=priya["_id"],
@@ -142,7 +142,7 @@ def seed_database():
             diagnosis="Fatigue, unspecified",
             prescription="None. Check blood panel.",
             notes="Patient mentioned feeling tired all the time but attributed it to work stress.",
-            vital_signs={"temperature": 98.4, "bloodPressure": "122/82", "heartRate": 75, "weight": 144.5},
+            vital_signs={"temperature": 36.8, "systolic": 122, "diastolic": 82, "heartRate": 75, "weight": 65.5, "glucose": 95.0, "spo2": 97.0},
         ),
         create_visit_doc(
             patient_id=priya["_id"],
@@ -152,7 +152,7 @@ def seed_database():
             diagnosis="Escalating Fatigue",
             prescription="B12 Supplements daily.",
             notes="Patient reported fatigue has been getting worse over the last month.",
-            vital_signs={"temperature": 98.6, "bloodPressure": "125/85", "heartRate": 78, "weight": 143.0},
+            vital_signs={"temperature": 37.0, "systolic": 125, "diastolic": 85, "heartRate": 78, "weight": 64.9, "glucose": 105.0, "spo2": 96.0},
         ),
         # John Doe
         create_visit_doc(
@@ -163,7 +163,7 @@ def seed_database():
             diagnosis="Asthma Control Check",
             prescription="Albuterol Inhaler (refill)",
             notes="Routine checkup. Asthma is well-controlled. Refilled Albuterol.",
-            vital_signs={"temperature": 98.2, "bloodPressure": "118/75", "heartRate": 68, "weight": 170.0},
+            vital_signs={"temperature": 36.7, "systolic": 118, "diastolic": 75, "heartRate": 68, "weight": 77.1, "spo2": 99.0},
         ),
         # Maria Garcia
         create_visit_doc(
@@ -174,7 +174,7 @@ def seed_database():
             diagnosis="Rheumatoid Arthritis Flare",
             prescription="Methotrexate 7.5mg weekly.",
             notes="Diagnosed with RA. Started on Methotrexate.",
-            vital_signs={"temperature": 98.8, "bloodPressure": "130/85", "heartRate": 80, "weight": 132.0},
+            vital_signs={"temperature": 37.1, "systolic": 130, "diastolic": 85, "heartRate": 80, "weight": 59.9, "glucose": 90.0, "spo2": 97.0},
         ),
         create_visit_doc(
             patient_id=maria["_id"],
@@ -184,7 +184,7 @@ def seed_database():
             diagnosis="RA follow-up",
             prescription="Continue Methotrexate. Add Folic Acid 1mg daily.",
             notes="Joint pain is somewhat managed, but patient reports occasional nausea post-medication.",
-            vital_signs={"temperature": 98.5, "bloodPressure": "128/82", "heartRate": 76, "weight": 131.0},
+            vital_signs={"temperature": 36.9, "systolic": 128, "diastolic": 82, "heartRate": 76, "weight": 59.4, "glucose": 92.0, "spo2": 98.0},
         ),
     ]
     visits_collection.insert_many(visits)
