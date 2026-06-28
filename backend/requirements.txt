@@ -9,3 +9,5 @@ bcrypt
 passlib[bcrypt]
 pyjwt
 python-multipart
+cascadeflow[groq]
+hindsight-client

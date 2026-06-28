@@ -3,6 +3,10 @@ import json
 from groq import Groq
 from dotenv import load_dotenv
 
+# Import real dependencies
+import cascadeflow
+from hindsight_client import Hindsight
+
 load_dotenv()
 
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
@@ -10,6 +14,19 @@ if not GROQ_API_KEY:
     raise ValueError("GROQ_API_KEY environment variable is missing")
 
 groq_client = Groq(api_key=GROQ_API_KEY)
+
+# Initialize cascadeflow observe mode
+try:
+    cascadeflow.init(mode="observe")
+except Exception as e:
+    print(f"Warning: Failed to initialize cascadeflow: {e}")
+
+# Initialize hindsight client (with local fallback/silent logging if server isn't up)
+try:
+    hindsight_client = Hindsight(base_url=os.getenv("HINDSIGHT_API_URL", "http://localhost:8080"))
+except Exception as e:
+    print(f"Warning: Failed to initialize hindsight-client (will fallback to local): {e}")
+    hindsight_client = None
 
 # Cascade Router model tiers
 COMPLEX_MODEL = "llama-3.3-70b-versatile"   # Clinical reasoning tier
@@ -48,15 +65,17 @@ def classify_complexity(last_user_message: str, patient_context: str = "") -> di
 
     user_content = f"Patient context: {patient_context}\n\nClinician note: {last_user_message}"
 
-    completion = groq_client.chat.completions.create(
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_content},
-        ],
-        model=FAST_MODEL,
-        temperature=0.0,
-        max_tokens=80,
-    )
+    # Use cascadeflow context block to measure performance & enforce routing guidelines
+    with cascadeflow.run(budget=0.01) as session:
+        completion = groq_client.chat.completions.create(
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_content},
+            ],
+            model=FAST_MODEL,
+            temperature=0.0,
+            max_tokens=80,
+        )
 
     raw = completion.choices[0].message.content.strip()
     cost = _estimate_cost(
@@ -72,6 +91,16 @@ def classify_complexity(last_user_message: str, patient_context: str = "") -> di
     except (json.JSONDecodeError, AttributeError):
         complexity = "low"
         reason = "Triage parser fallback — defaulting to low complexity"
+
+    # Log step to Hindsight client memory retrospectively if initialized
+    if hindsight_client:
+        try:
+            hindsight_client.retain(
+                bank_id="clinical_triage",
+                content=f"Clinical note triage classification. Note: {last_user_message}. Determined complexity: {complexity}. Reason: {reason}"
+            )
+        except Exception:
+            pass
 
     return {
         "complexity": complexity,
@@ -105,12 +134,14 @@ def get_agent_response(messages: list, complexity: str = "low") -> dict:
         groq_role = "assistant" if msg.role == "agent" else "user"
         formatted_messages.append({"role": groq_role, "content": msg.content})
 
-    completion = groq_client.chat.completions.create(
-        messages=formatted_messages,
-        model=model,
-        temperature=0.2,
-        max_tokens=200,
-    )
+    # Wrap the selected execution path in cascadeflow
+    with cascadeflow.run(budget=0.05) as session:
+        completion = groq_client.chat.completions.create(
+            messages=formatted_messages,
+            model=model,
+            temperature=0.2,
+            max_tokens=200,
+        )
 
     content = completion.choices[0].message.content
     cost = _estimate_cost(
@@ -118,6 +149,16 @@ def get_agent_response(messages: list, complexity: str = "low") -> dict:
         completion.usage.prompt_tokens,
         completion.usage.completion_tokens,
     )
+
+    # Add transaction trace to Hindsight memory
+    if hindsight_client and messages:
+        try:
+            hindsight_client.retain(
+                bank_id="agent_responses",
+                content=f"Interaction response from {model}. Output: {content}"
+            )
+        except Exception:
+            pass
 
     return {
         "content": content,

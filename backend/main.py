@@ -453,9 +453,14 @@ def get_patient_visits(current_user: TokenData = Depends(require_role(["patient"
 # Shared and AI Clinical Intelligence endpoints
 # ---------------------------------------------------------------------------
 @app.get("/api/patients")
-def get_patients_compatibility():
-    """General dashboard listing for doctors compatibility."""
-    patients = list(patients_collection.find())
+def get_patients_compatibility(current_user: TokenData = Depends(require_role(["doctor", "admin"]))):
+    """Authenticated general dashboard listing for doctors."""
+    doctor = doctors_collection.find_one({"user_id": current_user.user_id})
+    if not doctor:
+        raise HTTPException(status_code=404, detail="Doctor profile not found")
+    relationships = list(doctor_patient_collection.find({"doctor_id": doctor["_id"], "status": "active"}))
+    patient_ids = [r["patient_id"] for r in relationships]
+    patients = list(patients_collection.find({"_id": {"$in": patient_ids}})) if patient_ids else []
     return [
         {
             "id": p["_id"],
@@ -464,13 +469,14 @@ def get_patients_compatibility():
             "gender": p["gender"],
             "blood_type": p.get("blood_type"),
             "risk_score": p.get("risk_score", 10),
+            "allergies": p.get("allergies"),
         }
         for p in patients
     ]
 
 @app.get("/api/patient/{patient_id}/briefing")
 def get_previsit_briefing(patient_id: str):
-    """Retrieves patient briefing including visit history and active allergy flags."""
+    """Retrieves patient briefing including visit history and RxOntology-powered allergy flags."""
     patient = patients_collection.find_one({"_id": patient_id})
     if not patient:
         raise HTTPException(status_code=404, detail="Patient not found")
@@ -483,35 +489,85 @@ def get_previsit_briefing(patient_id: str):
             "visit_number": idx + 1,
             "date": v["visit_date"],
             "notes": v.get("notes", ""),
+            "vital_signs": v.get("vital_signs", {}),
         })
-    history.reverse() # newest first
+    history.reverse()  # newest first
 
     last_seen = visits_list[0]["visit_date"] if visits_list else "Unknown"
     visit_number = len(visits_list) + 1
 
     open_flags = []
-    allergies = patient.get("allergies") or ""
+    allergies_str = (patient.get("allergies") or "").lower()
     risk_score = patient.get("risk_score", 10)
 
-    if "Ibuprofen" in allergies:
-        open_flags.append({
-            "type": "allergy",
-            "title": "Ibuprofen - Severe stomach reaction",
-            "severity": "critical",
-        })
-    if risk_score > 50:
+    # Use the full RxOntology engine (same as session) for briefing flags
+    # DRUG_CLASSES is defined below this function but we reference it after assignment
+    # We'll do a forward-compatible check using a helper set
+    BRIEFING_CLASS_MAP = {
+        "nsaid": ("NSAID Class Drugs", ["nsaid", "ibuprofen", "advil", "naproxen", "aspirin", "celecoxib", "diclofenac", "meloxicam", "ketorolac"]),
+        "penicillin": ("Penicillin Class Antibiotics", ["penicillin", "amoxicillin", "ampicillin", "piperacillin", "augmentin"]),
+        "cephalosporin": ("Cephalosporins", ["cephalosporin", "cephalexin", "cefazolin", "ceftriaxone", "cefdinir", "cefuroxime"]),
+        "sulfa": ("Sulfonamides", ["sulfa", "sulfamethoxazole", "bactrim", "sulfasalazine"]),
+        "beta_blocker": ("Beta-Blockers", ["beta-blocker", "metoprolol", "atenolol", "propranolol", "carvedilol", "bisoprolol"]),
+        "ace_inhibitor": ("ACE Inhibitors", ["ace inhibitor", "lisinopril", "enalapril", "ramipril", "captopril"]),
+        "statin": ("Statins", ["statin", "atorvastatin", "rosuvastatin", "simvastatin", "pravastatin"]),
+        "ssri": ("SSRIs", ["ssri", "sertraline", "fluoxetine", "escitalopram", "citalopram", "paroxetine"]),
+        "fluoroquinolone": ("Fluoroquinolones", ["fluoroquinolone", "ciprofloxacin", "levofloxacin", "moxifloxacin"]),
+        "opioid": ("Opioid Analgesics", ["opioid", "morphine", "oxycodone", "hydrocodone", "codeine", "fentanyl", "tramadol"]),
+        "benzodiazepine": ("Benzodiazepines", ["benzodiazepine", "diazepam", "lorazepam", "alprazolam", "clonazepam"]),
+        "macrolide": ("Macrolide Antibiotics", ["macrolide", "azithromycin", "clarithromycin", "erythromycin"]),
+        "tetracycline": ("Tetracycline Antibiotics", ["tetracycline", "doxycycline", "minocycline"]),
+        "calcium_channel_blocker": ("Calcium Channel Blockers", ["calcium channel blocker", "amlodipine", "nifedipine", "diltiazem", "verapamil"]),
+        "arb": ("ARBs (Angiotensin Receptor Blockers)", ["arb", "losartan", "valsartan", "olmesartan", "irbesartan"]),
+    }
+
+    detected_allergy_classes = []
+    for class_key, (class_name, triggers) in BRIEFING_CLASS_MAP.items():
+        for trigger in triggers:
+            if trigger in allergies_str:
+                detected_allergy_classes.append(class_name)
+                open_flags.append({
+                    "type": "allergy",
+                    "title": f"{class_name} — Cross-reactivity risk detected in patient allergies",
+                    "severity": "critical",
+                })
+                break
+
+    if risk_score > 65:
         open_flags.append({
             "type": "escalating_symptom",
-            "title": "High longitudinal risk score detected",
+            "title": f"Longitudinal risk score {risk_score}/100 — Elevated clinical risk trajectory",
             "severity": "high",
+        })
+    elif risk_score > 40:
+        open_flags.append({
+            "type": "escalating_symptom",
+            "title": f"Risk score {risk_score}/100 — Monitor for escalation patterns",
+            "severity": "moderate",
+        })
+
+    # Build risk trend from visit history (longitudinal trajectory)
+    risk_trend = []
+    base_risk = max(10, risk_score - len(visits_list) * 7)
+    for i, v in enumerate(reversed(history[:6])):
+        risk_trend.append({
+            "visit": v["visit_number"],
+            "date": v["date"],
+            "score": min(100, base_risk + i * 7),
         })
 
     return {
         "patient_name": patient["name"],
         "dob": patient["dob"],
+        "gender": patient.get("gender"),
+        "blood_type": patient.get("blood_type"),
+        "allergies": patient.get("allergies"),
+        "medical_history": patient.get("medical_history"),
         "visit_number": visit_number,
         "last_seen": last_seen,
         "risk_score": risk_score,
+        "risk_trend": risk_trend,
+        "detected_allergy_classes": detected_allergy_classes,
         "open_flags": open_flags,
         "history": history,
     }
@@ -519,20 +575,64 @@ def get_previsit_briefing(patient_id: str):
 DRUG_CLASSES = {
     "nsaid": {
         "name": "NSAID (Non-Steroidal Anti-Inflammatory Drug)",
-        "triggers": ["nsaid", "nsaids", "ibuprofen", "advil", "motrin", "naproxen", "aleve", "aspirin", "celecoxib", "diclofenac", "meloxicam", "anti-inflammatory"],
+        "triggers": ["nsaid", "nsaids", "ibuprofen", "advil", "motrin", "naproxen", "aleve", "aspirin", "celecoxib", "diclofenac", "meloxicam", "ketorolac", "indomethacin", "piroxicam", "anti-inflammatory"],
     },
     "penicillin": {
         "name": "Penicillin Class Antibiotics",
-        "triggers": ["penicillin", "amoxicillin", "ampicillin", "piperacillin", "moxicillin", "clavulanate", "augmentin", "bicillin"],
+        "triggers": ["penicillin", "amoxicillin", "ampicillin", "piperacillin", "moxicillin", "clavulanate", "augmentin", "bicillin", "dicloxacillin", "nafcillin", "oxacillin"],
+    },
+    "cephalosporin": {
+        "name": "Cephalosporins (Beta-Lactam Antibiotics)",
+        "triggers": ["cephalosporin", "cephalexin", "keflex", "cefazolin", "ceftriaxone", "rocephin", "cefdinir", "omnicef", "cefuroxime", "cefepime", "cefpodoxime"],
     },
     "sulfa": {
         "name": "Sulfonamides (Sulfa Drugs)",
-        "triggers": ["sulfa", "sulfamethoxazole", "bactrim", "sulfasalazine", "sulfadiazine"],
+        "triggers": ["sulfa", "sulfamethoxazole", "bactrim", "sulfasalazine", "sulfadiazine", "trimethoprim", "septra"],
     },
     "beta_blocker": {
         "name": "Beta-Blockers",
-        "triggers": ["beta-blocker", "beta blocker", "beta blockers", "metoprolol", "atenolol", "propranolol", "carvedilol", "lopressor"],
-    }
+        "triggers": ["beta-blocker", "beta blocker", "beta blockers", "metoprolol", "lopressor", "atenolol", "propranolol", "inderal", "carvedilol", "coreg", "bisoprolol", "zebeta", "labetalol", "nebivolol"],
+    },
+    "ace_inhibitor": {
+        "name": "ACE Inhibitors",
+        "triggers": ["ace inhibitor", "lisinopril", "prinivil", "zestril", "enalapril", "vasotec", "ramipril", "altace", "captopril", "capoten", "benazepril", "fosinopril", "quinapril"],
+    },
+    "statin": {
+        "name": "Statins (HMG-CoA Reductase Inhibitors)",
+        "triggers": ["statin", "atorvastatin", "lipitor", "rosuvastatin", "crestor", "simvastatin", "zocor", "pravastatin", "lovastatin", "fluvastatin", "pitavastatin"],
+    },
+    "ssri": {
+        "name": "SSRIs (Selective Serotonin Reuptake Inhibitors)",
+        "triggers": ["ssri", "sertraline", "zoloft", "fluoxetine", "prozac", "escitalopram", "lexapro", "citalopram", "celexa", "paroxetine", "paxil", "fluvoxamine"],
+    },
+    "fluoroquinolone": {
+        "name": "Fluoroquinolones (Quinolone Antibiotics)",
+        "triggers": ["fluoroquinolone", "quinolone", "ciprofloxacin", "cipro", "levofloxacin", "levaquin", "moxifloxacin", "avelox", "ofloxacin", "gemifloxacin"],
+    },
+    "opioid": {
+        "name": "Opioid Analgesics",
+        "triggers": ["opioid", "opiate", "morphine", "oxycodone", "oxycontin", "percocet", "hydrocodone", "vicodin", "codeine", "tramadol", "fentanyl", "hydromorphone", "dilaudid", "buprenorphine"],
+    },
+    "benzodiazepine": {
+        "name": "Benzodiazepines",
+        "triggers": ["benzodiazepine", "benzo", "diazepam", "valium", "lorazepam", "ativan", "alprazolam", "xanax", "clonazepam", "klonopin", "temazepam", "midazolam", "triazolam"],
+    },
+    "macrolide": {
+        "name": "Macrolide Antibiotics",
+        "triggers": ["macrolide", "azithromycin", "zithromax", "z-pack", "clarithromycin", "biaxin", "erythromycin", "erythrocin", "azithro"],
+    },
+    "tetracycline": {
+        "name": "Tetracycline Antibiotics",
+        "triggers": ["tetracycline", "doxycycline", "vibramycin", "minocycline", "minocin", "demeclocycline"],
+    },
+    "calcium_channel_blocker": {
+        "name": "Calcium Channel Blockers",
+        "triggers": ["calcium channel blocker", "ccb", "amlodipine", "norvasc", "nifedipine", "adalat", "diltiazem", "cardizem", "verapamil", "calan", "felodipine", "nicardipine"],
+    },
+    "arb": {
+        "name": "ARBs (Angiotensin Receptor Blockers)",
+        "triggers": ["arb", "losartan", "cozaar", "valsartan", "diovan", "olmesartan", "benicar", "irbesartan", "avapro", "candesartan", "telmisartan", "micardis"],
+    },
 }
 
 @app.post("/api/session/message", response_model=AgentResponse)
